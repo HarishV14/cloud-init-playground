@@ -7,9 +7,9 @@ packages:
 
 runcmd:
   - systemctl enable --now docker
-  - git clone https://github.com/HarishV14/cloud-init-playground.git /opt/cloud-init-playground
-  - docker build -t testpress-app:v1 /opt/cloud-init-playground/app
-  - docker run -d --env-file /opt/testpress/app.env --name testpress-app --restart unless-stopped -p 8080:8080 testpress-app:v1
+  - test -d /opt/cloud-init-playground/.git || git clone https://github.com/HarishV14/cloud-init-playground.git /opt/cloud-init-playground
+  - docker image inspect testpress-app:v1 >/dev/null 2>&1 || docker build -t testpress-app:v1 /opt/cloud-init-playground/app
+  - docker container inspect testpress-app >/dev/null 2>&1 || docker run -d --env-file /opt/testpress/app.env --name testpress-app --restart unless-stopped -p 8080:8080 testpress-app:v1
 
 groups:
   - docker
