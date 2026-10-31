@@ -4,3 +4,25 @@ packages:
   - git
   - curl
   - docker.io
+
+runcmd:
+  - systemctl enable --now docker
+  - git clone https://github.com/HarishV14/cloud-init-playground.git /opt/cloud-init-playground
+  - docker build -t testpress-app:v1 /opt/cloud-init-playground/app
+  - docker run -d --env-file /opt/testpress/app.env --name testpress-app --restart unless-stopped -p 8080:8080 testpress-app:v1
+
+users:
+  - default
+  - name: testpress
+    gecos: Testpress Application User
+    shell: /usr/sbin/nologin
+    system: true
+
+write_files:
+  - path: /opt/testpress/app.env
+    owner: root:root
+    permissions: '0644'
+    content: |
+      APP_NAME=Testpress
+      APP_PORT=8080
+      APP_ENV=production
