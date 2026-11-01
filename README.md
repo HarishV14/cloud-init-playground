@@ -190,3 +190,38 @@ Docker's restart policy starts the application on later VM boots.
 ## Scope Note
 
 FFmpeg was requested in the original assignment but was intentionally omitted.
+
+## Continuous Docker Crash Monitoring
+
+The application uses Docker restart policy `unless-stopped` for automatic crash recovery.
+
+### Monitoring
+
+- `monitoring/check_restarts.py` continuously listens to Docker start and die events.
+- Counts consecutive application crashes.
+- Resets the failure count after the container runs for at least 60 seconds.
+- Generates a local Ubuntu journal alert after 5 consecutive crashes.
+- Docker continues restarting the application even after an alert.
+- `testpress-monitor.service` manages the monitoring process using systemd.
+
+### Verify Monitoring Service
+
+`multipass exec cloud-init-lab -- systemctl status testpress-monitor.service --no-pager`
+
+### View Monitoring Logs
+
+`multipass exec cloud-init-lab -- sudo journalctl -t testpress-monitor --no-pager -n 20`
+
+### Verified Test Results
+
+- Five consecutive crashes generated an alert successfully.
+- A sixth crash before 60 seconds increased the counter to 6.
+- After 60 seconds of stable runtime, the next crash reset the counter to 1.
+- Docker automatically restarted the application after crashes.
+- Docker and the monitoring service started successfully after VM reboot.
+
+### Limitations
+
+- Stability is based on container runtime, not HTTP health checks.
+- Alerts are stored locally in the Ubuntu journal.
+- Docker event interruptions may cause missed failures.
