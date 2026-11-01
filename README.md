@@ -193,7 +193,7 @@ FFmpeg was requested in the original assignment but was intentionally omitted.
 
 ## Continuous Docker Crash Monitoring
 
-The application uses Docker restart policy `unless-stopped` for automatic crash recovery.
+The application uses Docker restart policy `unless-stopped` for automatic crash recovery, combined with a Python-based circuit breaker to prevent continuous restart loops.
 
 ### Monitoring
 
@@ -201,27 +201,79 @@ The application uses Docker restart policy `unless-stopped` for automatic crash 
 - Counts consecutive application crashes.
 - Resets the failure count after the container runs for at least 60 seconds.
 - Generates a local Ubuntu journal alert after 5 consecutive crashes.
-- Docker continues restarting the application even after an alert.
+- Opens the circuit breaker after 5 consecutive crashes.
+- Changes Docker restart policy to `no` and stops the container during the OPEN state.
+- Pauses automatic recovery for 300 seconds (5 minutes).
+- Enforces the OPEN state if an external action manually starts the container during cooldown.
+- After cooldown, enters HALF-OPEN and attempts application recovery.
+- Monitors the application for 60 seconds during HALF-OPEN.
+- If stable, closes the circuit and restores Docker restart policy to `unless-stopped`.
+- If recovery fails, reopens the circuit and schedules another 300-second cooldown.
 - `testpress-monitor.service` manages the monitoring process using systemd.
+
+### Circuit Breaker States
+
+**CLOSED**
+- Normal application operation.
+- Docker automatically restarts the application after unexpected crashes.
+- Consecutive failures are monitored.
+
+**OPEN**
+- Activated after 5 consecutive crashes.
+- Docker automatic restart is disabled.
+- Container is stopped.
+- Recovery is paused for 300 seconds.
+
+**HALF-OPEN**
+- Application recovery is attempted after the cooldown.
+- Docker automatic restart remains disabled during testing.
+- Application must remain stable for 60 seconds.
+- Successful recovery returns the circuit to CLOSED.
+- Failed recovery returns the circuit to OPEN for another 300 seconds.
 
 ### Verify Monitoring Service
 
-`multipass exec cloud-init-lab -- systemctl status testpress-monitor.service --no-pager`
+`multipass exec cloud-init-lab -- sudo systemctl status testpress-monitor.service --no-pager`
 
 ### View Monitoring Logs
 
 `multipass exec cloud-init-lab -- sudo journalctl -t testpress-monitor --no-pager -n 20`
 
+### Inspect Circuit Breaker State
+
+`multipass exec cloud-init-lab -- sudo cat /var/lib/testpress-monitor/state.json`
+
+### Verify Docker Restart Policy
+
+`multipass exec cloud-init-lab -- sudo docker inspect --format 'Status={{.State.Status}} RestartPolicy={{.HostConfig.RestartPolicy.Name}}' testpress-app`
+
+Expected restart policies:
+- CLOSED: `unless-stopped`
+- OPEN: `no`
+- HALF-OPEN: `no`
+
+### Simulate an Application Crash
+
+`multipass exec cloud-init-lab -- sudo sh -c 'kill -9 $(docker inspect --format "{{.State.Pid}}" testpress-app)'`
+
 ### Verified Test Results
 
-- Five consecutive crashes generated an alert successfully.
-- A sixth crash before 60 seconds increased the counter to 6.
-- After 60 seconds of stable runtime, the next crash reset the counter to 1.
-- Docker automatically restarted the application after crashes.
-- Docker and the monitoring service started successfully after VM reboot.
+- Fresh Ubuntu 24.04 VM provisioning completed successfully.
+- Monitoring service started successfully through systemd.
+- Docker automatically restarted the application after unexpected process crashes.
+- Five consecutive crashes activated the circuit breaker.
+- Docker restart policy changed to `no` and the container stopped.
+- An external manual start during OPEN was detected and stopped by the monitor.
+- The 300-second cooldown completed and automatic recovery started.
+- HALF-OPEN recovery successfully passed the 60-second stability test.
+- Circuit returned to CLOSED and Docker restart policy was restored to `unless-stopped`.
+- A subsequent crash during HALF-OPEN returned the circuit to OPEN.
+- Another 300-second cooldown was scheduled after failed recovery.
 
 ### Limitations
 
 - Stability is based on container runtime, not HTTP health checks.
 - Alerts are stored locally in the Ubuntu journal.
-- Docker event interruptions may cause missed failures.
+- Docker event interruptions can affect event detection.
+- The monitoring service requires Docker to be available.
+- External alert delivery and distributed monitoring are not implemented.
