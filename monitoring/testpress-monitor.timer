@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Testpress application restarts every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=1s
+Unit=testpress-monitor.service
+
+[Install]
+WantedBy=timers.target

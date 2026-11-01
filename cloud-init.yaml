@@ -11,6 +11,12 @@ runcmd:
   - docker image inspect testpress-app:v1 >/dev/null 2>&1 || docker build -t testpress-app:v1 /opt/cloud-init-playground/app
   - docker container inspect testpress-app >/dev/null 2>&1 || docker run -d --env-file /opt/testpress/app.env --name testpress-app --restart unless-stopped -p 8080:8080 testpress-app:v1
 
+
+  - install -m 0644 /opt/cloud-init-playground/monitoring/testpress-monitor.service /etc/systemd/system/testpress-monitor.service
+  - install -m 0644 /opt/cloud-init-playground/monitoring/testpress-monitor.timer /etc/systemd/system/testpress-monitor.timer
+  - systemctl daemon-reload
+  - systemctl enable --now testpress-monitor.timer
+
 groups:
   - docker
 
