@@ -14,7 +14,7 @@ Automated and reproducible Ubuntu 24.04 server provisioning using Multipass, clo
 ## Features
 
 - Automatically installs Git, curl, and Docker.
-- Creates a dedicated `testpress` system user.
+- Creates a dedicated non-root `testpress` user with Docker group access.
 - Creates the environment configuration file `/opt/testpress/app.env`.
 - Clones the application source code from GitHub.
 - Builds and runs the application inside a Docker container.
@@ -119,3 +119,74 @@ multipass delete --purge cloud-init-lab
 ```
 
 This removes the VM and its virtual disk. It does not delete the local project directory or GitHub repository.
+
+## Verification Results
+
+### Cloud-init Status
+
+Command: `multipass exec cloud-init-lab -- cloud-init status --wait --long`
+
+Actual result:
+
+    status: done
+    extended_status: done
+    errors: []
+    recoverable_errors: {}
+
+### Non-root Docker Access
+
+Command: `multipass exec cloud-init-lab -- sudo -u testpress docker ps`
+
+Result: The testpress-app container was listed successfully without permission errors.
+
+### HTTP Application
+
+Command: `multipass exec cloud-init-lab -- curl -i http://localhost:8080/`
+
+Actual result:
+
+    HTTP/1.0 200 OK
+    Content-Type: text/plain
+
+    Hello from Testpress!
+
+### Environment File
+
+Command: `multipass exec cloud-init-lab -- sudo cat /opt/testpress/app.env`
+
+Actual result:
+
+    APP_NAME=Testpress
+    APP_PORT=8080
+    APP_ENV=production
+
+### Idempotency
+
+The deployment checks whether the repository, image, and container already exist.
+Repeated deployment commands did not create duplicate resources.
+The existing container retained its ID: `2bf458e37063`.
+
+## Cloud-init Stages
+
+1. Detect: Identifies the instance and data source.
+2. Local: Performs early initialization.
+3. Network: Configures networking and early setup.
+4. Config: Applies configuration modules.
+5. Final: Executes final setup commands, including runcmd.
+
+### First Boot vs Every Boot
+
+Cloud-init records completed modules under `/var/lib/cloud/instance/sem/`.
+The runcmd deployment normally runs once per instance.
+Docker's restart policy starts the application on later VM boots.
+
+## Challenges and Learnings
+
+- Docker permissions: Added testpress to the Docker group.
+- YAML permissions: Used `!!str 0644` to ensure a valid string.
+- Idempotency: Added existence checks before creating resources.
+- Crash recovery: Learned that intentional Docker stops differ from unexpected crashes.
+
+## Scope Note
+
+FFmpeg was requested in the original assignment but was intentionally omitted.
