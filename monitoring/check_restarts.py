@@ -3,21 +3,12 @@ import json
 import subprocess
 import time
 from pathlib import Path
+from datetime import datetime
 
 CONTAINER = "testpress-app"
 THRESHOLD = 5
-WINDOW_SECONDS = 300
+STABLE_SECONDS = 60
 STATE_FILE = Path("/var/lib/testpress-monitor/state.json")
-
-
-def docker_restart_count():
-    result = subprocess.run(
-        ["docker", "inspect", "--format", "{{.RestartCount}}", CONTAINER],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return int(result.stdout.strip())
 
 
 def log(message, priority="info"):
@@ -27,50 +18,107 @@ def log(message, priority="info"):
     )
 
 
-def main():
-    now = time.time()
-    current = docker_restart_count()
+def load_state():
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (FileNotFoundError, ValueError):
+        return {"failures": 0, "alerted": False, "started_at": None}
 
+
+def save_state(state):
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state))
 
-    if STATE_FILE.exists():
-        state = json.loads(STATE_FILE.read_text())
-    else:
-        state = {"last_count": current, "events": [], "alerted": False}
 
-    previous = state["last_count"]
+def docker_started_at():
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.StartedAt}}", CONTAINER],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    value = result.stdout.strip()
+    if value.startswith("0001-"):
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
-    if current < previous:
-        state = {"last_count": current, "events": [], "alerted": False}
-        previous = current
 
-    events = [
-        event for event in state["events"]
-        if now - event["time"] <= WINDOW_SECONDS
-    ]
+def main():
+    state = load_state()
 
-    if current > previous:
-        events.append({"time": now, "count": current - previous})
+    # Begin monitoring from the current running container.
+    # Previous crashes are not counted retroactively.
+    state["started_at"] = docker_started_at()
+    save_state(state)
 
-    recent_restarts = sum(event["count"] for event in events)
+    while True:
+        command = [
+            "docker", "events",
+            "--filter", f"container={CONTAINER}",
+            "--filter", "event=start",
+            "--filter", "event=die",
+            "--format", "{{json .}}",
+        ]
 
-    if recent_restarts >= THRESHOLD and not state["alerted"]:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+
+        for line in process.stdout:
+            try:
+                event = json.loads(line)
+                action = event.get("Action")
+                timestamp = event.get("timeNano", 0) / 1_000_000_000
+
+                if action == "start":
+                    state["started_at"] = timestamp
+
+                elif action == "die":
+                    started = state.get("started_at")
+
+                    if started is None:
+                        state["failures"] = 0
+                        state["alerted"] = False
+                    elif timestamp - started >= STABLE_SECONDS:
+                        state["failures"] = 0
+                        state["alerted"] = False
+
+                    state["failures"] += 1
+
+                    log(
+                        f"{CONTAINER} consecutive failures: {state['failures']}"
+                    )
+
+                    if state["failures"] >= THRESHOLD and not state["alerted"]:
+                        log(
+                            f"ALERT: {CONTAINER} crashed "
+                            f"{state['failures']} consecutive times "
+                            f"without stable recovery",
+                            "warning",
+                        )
+                        state["alerted"] = True
+
+                    state["started_at"] = None
+
+                save_state(state)
+
+            except (ValueError, KeyError, TypeError) as error:
+                log(f"Unable to process Docker event: {error}", "warning")
+
+        process.wait()
         log(
-            f"ALERT: {CONTAINER} restarted {recent_restarts} times "
-            f"within 5 minutes",
+            "Docker event stream disconnected; resetting failure sequence and reconnecting",
             "warning",
         )
-        state["alerted"] = True
-
-    if recent_restarts < THRESHOLD:
+        state["failures"] = 0
         state["alerted"] = False
-
-    state.update({
-        "last_count": current,
-        "events": events,
-    })
-
-    STATE_FILE.write_text(json.dumps(state))
+        state["started_at"] = None
+        save_state(state)
+        time.sleep(2)
+        state["started_at"] = docker_started_at()
+        save_state(state)
 
 
 if __name__ == "__main__":

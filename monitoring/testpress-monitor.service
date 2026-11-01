@@ -1,8 +1,13 @@
 [Unit]
-Description=Monitor Testpress Docker container restarts
-Wants=docker.service
+Description=Monitor consecutive Testpress application failures
+Requires=docker.service
 After=docker.service
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart=/usr/bin/python3 /opt/cloud-init-playground/monitoring/check_restarts.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

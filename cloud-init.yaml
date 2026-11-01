@@ -13,9 +13,8 @@ runcmd:
 
 
   - install -m 0644 /opt/cloud-init-playground/monitoring/testpress-monitor.service /etc/systemd/system/testpress-monitor.service
-  - install -m 0644 /opt/cloud-init-playground/monitoring/testpress-monitor.timer /etc/systemd/system/testpress-monitor.timer
   - systemctl daemon-reload
-  - systemctl enable --now testpress-monitor.timer
+  - systemctl enable --now testpress-monitor.service
 
 groups:
   - docker
